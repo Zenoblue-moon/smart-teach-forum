@@ -150,6 +150,52 @@ class Tag {
   }
 }
 
+/// 表情回应（fof/reactions）。
+class Reaction {
+  Reaction.fromJson(Map<String, dynamic> json)
+      : id = json['id']?.toString() ?? '',
+        attributes = (json['attributes'] ?? const {}) as Map;
+
+  final String id;
+  final Map attributes;
+
+  /// 英文标识，如 thumbsup / laughing / heart。
+  String get identifier => (attributes['identifier'] ?? '').toString();
+
+  /// 类型（emoji 等）。
+  String get type => (attributes['type'] ?? '').toString();
+
+  bool get enabled => (attributes['enabled'] ?? false) == true;
+
+  /// 将 identifier 映射为可显示的 Emoji。
+  String get emoji {
+    switch (identifier) {
+      case 'thumbsup':
+        return '👍';
+      case 'thumbsdown':
+        return '👎';
+      case 'laughing':
+        return '😄';
+      case 'confused':
+        return '😕';
+      case 'heart':
+        return '❤️';
+      case 'tada':
+        return '🎉';
+      case 'cold_sweat':
+        return '😅';
+      case 'joy':
+        return '😂';
+      case 'angry':
+        return '😡';
+      case 'cry':
+        return '😢';
+      default:
+        return '😀';
+    }
+  }
+}
+
 /// 讨论（帖子主题）
 class Discussion {
   Discussion.fromJson(Map<String, dynamic> json, ApiDocument doc)
@@ -269,6 +315,37 @@ class Post {
     }
     return null;
   }
+
+  /// 净赞数（fof/gamification 的 votes 字段，登录态返回字符串数字）。
+  int get votes => _int(attributes['votes']);
+
+  /// 当前用户是否已点赞。
+  bool get hasUpvoted => (attributes['hasUpvoted'] ?? false) == true;
+
+  /// 当前用户是否已踩。
+  bool get hasDownvoted => (attributes['hasDownvoted'] ?? false) == true;
+
+  /// 当前用户是否可以投票（赞/踩）。
+  bool get canVote => (attributes['canVote'] ?? false) == true;
+
+  /// 当前用户是否可以查看投票者。
+  bool get canSeeVotes => (attributes['canSeeVotes'] ?? false) == true;
+
+  /// 当前用户是否可以发表情回应（fof/reactions）。
+  bool get canReact => (attributes['canReact'] ?? false) == true;
+
+  /// 各表情的计数，如 {"1": 15, "6": 9}。
+  Map<String, int> get reactionCounts {
+    final v = attributes['reactionCounts'];
+    if (v is! Map) return const {};
+    final out = <String, int>{};
+    v.forEach((k, val) => out[k.toString()] = _int(val));
+    return out;
+  }
+
+  /// 当前用户所选表情的 reaction id（无则为 null）。
+  String? get userReactionIdentifier =>
+      attributes['userReactionIdentifier']?.toString();
 
   ForumUser? get author {
     final rel = _json['relationships'];

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api_client.dart';
@@ -99,6 +100,9 @@ class AuthState extends ChangeNotifier {
 
 /// 外观与偏好设置。
 class SettingsState extends ChangeNotifier {
+  static const MethodChannel _predictiveBackChannel =
+      MethodChannel('smart_teach/predictive_back');
+
   ThemeMode _themeMode = ThemeMode.system;
   int _themePresetIndex = 0;
   bool _dynamicColor = false;
@@ -176,6 +180,13 @@ class SettingsState extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(AppConfig.kPredictiveBack, value);
+    // 通知原生刷新预测式返回状态（Android 13+ 系统级能力）。
+    try {
+      await _predictiveBackChannel
+          .invokeMethod('setPredictiveBack', {'enabled': value});
+    } catch (_) {
+      // 原生通道不可用时忽略。
+    }
   }
 
   Future<void> setPageTransition(PageTransitionType type) async {

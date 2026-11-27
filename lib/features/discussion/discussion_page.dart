@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/config.dart';
 import '../../core/models.dart';
+import '../../core/services/app_state.dart';
 import '../../core/services/forum_service.dart';
 import '../../core/utils.dart';
 import '../../widgets/html_content.dart';
@@ -43,6 +45,9 @@ class _DiscussionPageState extends State<DiscussionPage> {
   bool _hasMore = true;
   String? _error;
   int? _highlightFloor;
+  List<Reaction> _reactions = const [];
+  final Set<String> _pendingVote = {};
+  final Set<String> _pendingReact = {};
 
   @override
   void initState() {
@@ -50,6 +55,16 @@ class _DiscussionPageState extends State<DiscussionPage> {
     _title = widget.initialTitle;
     _scroll.addListener(_onScroll);
     _load();
+    _loadReactions();
+  }
+
+  Future<void> _loadReactions() async {
+    try {
+      final list = await ForumService.instance.getReactions();
+      if (mounted) setState(() => _reactions = list);
+    } catch (_) {
+      // 表情列表加载失败不影响主体。
+    }
   }
 
   @override
@@ -215,6 +230,170 @@ class _DiscussionPageState extends State<DiscussionPage> {
         .then((_) => _load());
   }
 
+  void _replacePost(Post updated) {
+    final idx = _posts.indexWhere((p) => p.id == updated.id);
+    if (idx >= 0 && mounted) {
+      setState(() => _posts[idx] = updated);
+    }
+  }
+
+  bool get _loggedIn => context.read<AuthState>().isLoggedIn;
+
+  void _requireLogin() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('请先登录后再操作')),
+    );
+  }
+
+  Future<void> _onVote(
+    Post post, {
+    required bool upvote,
+    required bool downvote,
+  }) async {
+    if (_pendingVote.contains(post.id)) return;
+    if (!_loggedIn) return _requireLogin();
+    setState(() => _pendingVote.add(post.id));
+    try {
+      final updated = await ForumService.instance
+          .vote(post.id, upvote: upvote, downvote: downvote);
+      _replacePost(updated);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString())),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _pendingVote.remove(post.id));
+    }
+  }
+
+  Future<void> _onReact(Post post, String? reactionId) async {
+    if (_pendingReact.contains(post.id)) return;
+    if (!_loggedIn) return _requireLogin();
+    setState(() => _pendingReact.add(post.id));
+    try {
+      final updated =
+          await ForumService.instance.react(post.id, reactionId);
+      _replacePost(updated);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString())),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _pendingReact.remove(post.id));
+    }
+  }
+
+  String? _reactionEmoji(String? id) {
+    if (id == null) return null;
+    for (final r in _reactions) {
+      if (r.id == id) return r.emoji;
+    }
+    return null;
+  }
+
+  /// 弹出表情选择面板（排除会转换为赞/踩的 thumbsup/thumbsdown）。
+  void _showReactions(Post post) {
+    final options = _reactions
+        .where((r) => r.identifier != 'thumbsup' && r.identifier != 'thumbsdown')
+        .toList();
+    final current = post.userReactionIdentifier;
+
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                child: Row(
+                  children: [
+                    const Text('选择表情',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    if (current != null)
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          _onReact(post, null);
+                        },
+                        child: const Text('取消回应'),
+                      ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      for (final r in options)
+                        _reactionOption(sheetContext, post, r, current),
+                      if (options.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Text('暂无可用表情'),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _reactionOption(
+    BuildContext sheetContext,
+    Post post,
+    Reaction reaction,
+    String? current,
+  ) {
+    final selected = current == reaction.id;
+    return InkWell(
+      onTap: () {
+        Navigator.pop(sheetContext);
+        _onReact(post, selected ? null : reaction.id);
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: selected
+              ? Theme.of(context).colorScheme.primary.withOpacity(0.12)
+              : Colors.transparent,
+          border: Border.all(
+            color: selected
+                ? Theme.of(context).colorScheme.primary
+                : Colors.transparent,
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(reaction.emoji, style: const TextStyle(fontSize: 24)),
+            const SizedBox(height: 4),
+            Text(
+              '${post.reactionCounts[reaction.id] ?? 0}',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -305,6 +484,9 @@ class _DiscussionPageState extends State<DiscussionPage> {
                   ),
           onReply: () => _openReply(quote: post),
           onCopyLink: () => _copyLink(postNumber: number),
+          onVote: (up, down) => _onVote(post, upvote: up, downvote: down),
+          onReact: () => _showReactions(post),
+          currentReactionEmoji: _reactionEmoji(post.userReactionIdentifier),
         );
       },
     );
@@ -375,6 +557,9 @@ class PostTile extends StatelessWidget {
     required this.onAuthorTap,
     required this.onReply,
     required this.onCopyLink,
+    required this.onVote,
+    required this.onReact,
+    this.currentReactionEmoji,
   }) : super(key: key);
 
   final Post post;
@@ -385,6 +570,11 @@ class PostTile extends StatelessWidget {
   final VoidCallback? onAuthorTap;
   final VoidCallback onReply;
   final VoidCallback onCopyLink;
+  final void Function(bool upvote, bool downvote) onVote;
+  final VoidCallback onReact;
+
+  /// 当前用户所选表情的 Emoji（用于在按钮上显示）。
+  final String? currentReactionEmoji;
 
   @override
   Widget build(BuildContext context) {
@@ -439,21 +629,82 @@ class PostTile extends StatelessWidget {
             onUserLink: onUserLink,
           ),
           const SizedBox(height: 6),
-          Row(
+          Wrap(
+            spacing: 2,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              _voteButton(context, up: true),
+              _voteButton(context, up: false),
+              _reactButton(context),
               TextButton.icon(
                 onPressed: onReply,
                 icon: const Icon(Icons.reply, size: 16),
                 label: const Text('回复'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
               ),
               TextButton.icon(
                 onPressed: onCopyLink,
                 icon: const Icon(Icons.link, size: 16),
-                label: const Text('复制链接'),
+                label: const Text('复制'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
               ),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _voteButton(BuildContext context, {required bool up}) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = up ? post.hasUpvoted : post.hasDownvoted;
+    final color = up ? scheme.primary : Colors.redAccent;
+    final icon = up
+        ? (selected ? Icons.thumb_up_alt : Icons.thumb_up_alt_outlined)
+        : (selected ? Icons.thumb_down_alt : Icons.thumb_down_alt_outlined);
+    final label = up ? (post.votes > 0 ? '${post.votes}' : '赞') : '踩';
+    return TextButton.icon(
+      onPressed: post.canVote
+          ? () => up
+              ? onVote(!post.hasUpvoted, false)
+              : onVote(false, !post.hasDownvoted)
+          : null,
+      icon: Icon(icon, size: 16, color: selected ? color : null),
+      label: Text(label),
+      style: TextButton.styleFrom(
+        primary: selected ? color : scheme.onSurfaceVariant,
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+      ),
+    );
+  }
+
+  Widget _reactButton(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final hasReact = post.userReactionIdentifier != null;
+    final total = post.reactionCounts.values.fold<int>(0, (a, b) => a + b);
+    final label = hasReact
+        ? (currentReactionEmoji ?? '已回应')
+        : (total > 0 ? '$total' : '表情');
+    return TextButton.icon(
+      onPressed: post.canReact ? onReact : null,
+      icon: Icon(
+        hasReact ? Icons.emoji_emotions : Icons.emoji_emotions_outlined,
+        size: 16,
+        color: hasReact ? scheme.primary : null,
+      ),
+      label: Text(label),
+      style: TextButton.styleFrom(
+        primary: hasReact ? scheme.primary : scheme.onSurfaceVariant,
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
       ),
     );
   }

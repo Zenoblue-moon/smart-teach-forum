@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models.dart';
+import '../../core/services/forum_service.dart';
 import '../../core/utils.dart';
 import '../../widgets/discussion_list.dart';
 import '../../widgets/user_avatar.dart';
@@ -16,9 +17,26 @@ class UserPage extends StatefulWidget {
 }
 
 class _UserPageState extends State<UserPage> {
+  late ForumUser _user;
+
+  @override
+  void initState() {
+    super.initState();
+    _user = widget.user;
+    _loadFullUser();
+  }
+
+  /// 列表页带入的用户对象通常只有昵称/头像，这里补拉完整统计字段。
+  Future<void> _loadFullUser() async {
+    final full = await ForumService.instance.getUser(widget.user.id);
+    if (full != null && mounted) {
+      setState(() => _user = full);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final u = widget.user;
+    final u = _user;
     final scheme = Theme.of(context).colorScheme;
 
     return DefaultTabController(

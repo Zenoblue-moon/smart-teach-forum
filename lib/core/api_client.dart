@@ -146,6 +146,21 @@ class ApiClient {
     return _parse(res);
   }
 
+  Future<ApiDocument> patch(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? query,
+  }) async {
+    final res = await _client
+        .patch(
+          _uri(path, query),
+          headers: _headers,
+          body: body == null ? null : jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 30));
+    return _parse(res);
+  }
+
   /// 账号密码登录（Flarum /api/token）。
   Future<AuthResult> login(String identification, String password) async {
     final res = await _client

@@ -137,6 +137,49 @@ class ForumService {
   }
 
   // ---------------------------------------------------------------------
+  // 赞/踩（fof/gamification）与表情回应（fof/reactions）
+  // ---------------------------------------------------------------------
+
+  /// 表情回应列表。
+  Future<List<Reaction>> getReactions() async {
+    final doc = await _api.get('/reactions');
+    return doc.dataList
+        .map((e) => Reaction.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 赞 / 踩投票。
+  ///
+  /// fof/gamification 的投票 API：`PATCH /posts/{id}`，attributes 为
+  /// `[upvote, downvote, "vote"]` 数组；取消时两者都为 false。
+  Future<Post> vote(
+    String postId, {
+    required bool upvote,
+    required bool downvote,
+  }) async {
+    final doc = await _api.patch('/posts/$postId', body: {
+      'data': {
+        'type': 'posts',
+        'id': postId,
+        'attributes': [upvote, downvote, 'vote'],
+      },
+    });
+    return Post.fromJson(doc.data!, doc);
+  }
+
+  /// 发表情回应；[reactionId] 为 null 表示取消当前回应。
+  Future<Post> react(String postId, String? reactionId) async {
+    final doc = await _api.patch('/posts/$postId', body: {
+      'data': {
+        'type': 'posts',
+        'id': postId,
+        'attributes': {'reaction': reactionId},
+      },
+    });
+    return Post.fromJson(doc.data!, doc);
+  }
+
+  // ---------------------------------------------------------------------
   // 通知
   // ---------------------------------------------------------------------
 

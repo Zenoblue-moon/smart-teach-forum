@@ -12,7 +12,7 @@ class AppConfig {
   static const String siteName = '智教联盟论坛';
 
   /// 应用版本号
-  static const String appVersion = 'v1.0';
+  static const String appVersion = 'v1.1';
 
   /// 站点主色（绿色）
   static const int primaryColorValue = 0xFF26A03D;
