@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// 安全地把动态值转为 int（缺失或非数字返回 0）。
 int _int(dynamic v) {
   if (v is num) return v.toInt();
@@ -374,29 +376,163 @@ class Post {
 
 /// 通知
 class NotificationItem {
-  NotificationItem.fromJson(Map<String, dynamic> json)
+  NotificationItem.fromJson(Map<String, dynamic> json, ApiDocument doc)
       : id = json['id']?.toString() ?? '',
-        attributes = (json['attributes'] ?? const {}) as Map;
+        attributes = (json['attributes'] ?? const {}) as Map,
+        _doc = doc,
+        _json = json;
 
   final String id;
   final Map attributes;
+  final ApiDocument _doc;
+  final Map<String, dynamic> _json;
 
-  String get type => (attributes['contentType'] ?? '').toString();
-  String get contentHtml => (attributes['contentHtml'] ?? '').toString();
+  String get contentType => (attributes['contentType'] ?? '').toString();
+
+  /// Flarum 通知的正文在 `content` 字段（不是 contentHtml），
+  /// 且不同 contentType 下格式不同（HTML / JSON / 数字）。
+  String get rawContent {
+    final v = attributes['content'];
+    return v == null ? '' : v.toString();
+  }
+
   String? get createdAt => attributes['createdAt'] as String?;
   bool get isRead => (attributes['isRead'] ?? false) == true;
 
-  /// 通知类型的中文友好名。
+  Map<String, dynamic>? get _rel =>
+      _json['relationships'] is Map<String, dynamic>
+          ? _json['relationships'] as Map<String, dynamic>?
+          : null;
+
+  /// 触发通知的用户。
+  ForumUser? get fromUser {
+    final rel = _rel;
+    if (rel == null) return null;
+    final u = _doc.ref(rel['fromUser']);
+    if (u != null) return ForumUser.fromJson(u);
+    return null;
+  }
+
+  String get fromUsername => fromUser?.displayName ?? '';
+
+  /// 被操作对象（post 或 discussion）。
+  Map<String, dynamic>? get _subject {
+    final rel = _rel;
+    if (rel == null) return null;
+    return _doc.ref(rel['subject']);
+  }
+
+  /// 关联的讨论 id（用于点击跳转）。
+  String? get discussionId {
+    final subj = _subject;
+    if (subj == null) return null;
+    if (subj['type'] == 'discussions') return subj['id']?.toString();
+    if (subj['type'] == 'posts') {
+      final rel = subj['relationships'];
+      if (rel is Map) {
+        final d = rel['discussion'];
+        if (d is Map && d['data'] is Map) {
+          return (d['data'] as Map)['id']?.toString();
+        }
+      }
+    }
+    return null;
+  }
+
+  /// 关联的帖子楼层号（用于定位，无则 null）。
+  int? get postNumber {
+    final subj = _subject;
+    if (subj == null || subj['type'] != 'posts') return null;
+    final a = subj['attributes'];
+    if (a is Map) {
+      final n = a['number'];
+      return n is num ? n.toInt() : null;
+    }
+    return null;
+  }
+
+  /// 被操作对象的内容摘要（讨论标题或帖子正文，可能是 HTML）。
+  String get subjectText {
+    final subj = _subject;
+    if (subj == null) return '';
+    final a = subj['attributes'];
+    if (a is Map) {
+      if (subj['type'] == 'discussions') {
+        return (a['title'] ?? '').toString();
+      }
+      if (subj['type'] == 'posts') {
+        return (a['contentHtml'] ?? a['content'] ?? '').toString();
+      }
+    }
+    return '';
+  }
+
+  /// 表情回应时的 emoji（如 🎉），非表情类通知返回 null。
+  String? get reactionEmoji {
+    if (contentType != 'postReacted') return null;
+    try {
+      final m = jsonDecode(rawContent);
+      if (m is Map) {
+        final identifier = m['identifier']?.toString() ?? '';
+        switch (identifier) {
+          case 'thumbsup':
+            return '👍';
+          case 'thumbsdown':
+            return '👎';
+          case 'smile':
+          case 'laughing':
+            return '😄';
+          case 'heart':
+            return '❤️';
+          case 'tada':
+            return '🎉';
+          case 'cry':
+            return '😅';
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 动作描述（不含主语），用于拼接「昵称 + 动作」。
+  String get actionText {
+    switch (contentType) {
+      case 'postReacted':
+        return '回应了你的帖子';
+      case 'vote':
+        final v = int.tryParse(rawContent) ?? 0;
+        if (v > 0) return '赞了你的帖子';
+        if (v < 0) return '踩了你的帖子';
+        return '对你的帖子投了票';
+      case 'postLiked':
+        return '赞了你的帖子';
+      case 'postMentioned':
+      case 'userMentioned':
+        return '提及了你';
+      case 'newPost':
+        return '回复了你的讨论';
+      case 'discussionRenamed':
+        return '修改了讨论标题';
+      case 'discussionLocked':
+        return '锁定了讨论';
+      case 'discussionStickied':
+        return '置顶了讨论';
+      default:
+        return '有新动态';
+    }
+  }
+
+  /// 通知类型的中文友好名（用于徽章展示）。
   String get typeLabel {
-    switch (type) {
+    switch (contentType) {
       case 'discussionRenamed':
         return '标题修改';
       case 'postMentioned':
-        return '提及';
       case 'userMentioned':
         return '提及';
       case 'postLiked':
-        return '点赞';
+      case 'vote':
+        return '赞/踩';
       case 'postReacted':
         return '回应';
       case 'newPost':
@@ -406,7 +542,7 @@ class NotificationItem {
       case 'discussionStickied':
         return '置顶';
       default:
-        return type;
+        return contentType;
     }
   }
 }

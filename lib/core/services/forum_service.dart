@@ -190,9 +190,10 @@ class ForumService {
     final doc = await _api.get('/notifications', query: {
       'page[offset]': '$offset',
       'page[limit]': '$limit',
+      'include': 'fromUser,subject',
     });
     final items = doc.dataList
-        .map((e) => NotificationItem.fromJson(e as Map<String, dynamic>))
+        .map((e) => NotificationItem.fromJson(e as Map<String, dynamic>, doc))
         .toList();
     return PageResult(items, nextOffset: items.length >= limit ? offset + limit : null);
   }

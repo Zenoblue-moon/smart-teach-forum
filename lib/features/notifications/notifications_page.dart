@@ -5,7 +5,7 @@ import '../../core/models.dart';
 import '../../core/services/app_state.dart';
 import '../../core/services/forum_service.dart';
 import '../../core/utils.dart';
-import '../../widgets/html_content.dart';
+import '../../widgets/user_avatar.dart';
 import '../auth/web_login_page.dart';
 import '../discussion/discussion_page.dart';
 
@@ -24,6 +24,7 @@ class _NotificationsPageState extends State<NotificationsPage>
   bool _loading = false;
   bool _loadingMore = false;
   bool _hasMore = true;
+  bool _wasLoggedIn = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -32,6 +33,8 @@ class _NotificationsPageState extends State<NotificationsPage>
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
+    // 首次进入自动加载（未登录时 _refresh 内部会直接返回）。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
   }
 
   @override
@@ -114,6 +117,14 @@ class _NotificationsPageState extends State<NotificationsPage>
   Widget build(BuildContext context) {
     super.build(context);
     final auth = context.watch<AuthState>();
+
+    // 登录状态从「未登录」变为「已登录」时自动刷新通知。
+    if (auth.isLoggedIn != _wasLoggedIn) {
+      _wasLoggedIn = auth.isLoggedIn;
+      if (auth.isLoggedIn) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+      }
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -204,41 +215,76 @@ class _NotificationTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      color: item.isRead ? null : scheme.primary.withOpacity(0.04),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: scheme.primary.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(6),
+    final emoji = item.reactionEmoji;
+    final summary = stripHtml(item.subjectText).trim();
+    final from = item.fromUser;
+    final did = item.discussionId;
+
+    return InkWell(
+      onTap: did == null
+          ? null
+          : () => onOpen(did, item.postNumber ?? 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        color: item.isRead ? null : scheme.primary.withOpacity(0.04),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (from != null)
+              UserAvatar(user: from, radius: 16)
+            else
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: scheme.primary.withOpacity(0.15),
+                child: Icon(Icons.notifications_none,
+                    size: 18, color: scheme.primary),
+              ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  RichText(
+                    text: TextSpan(
+                      style: DefaultTextStyle.of(context).style,
+                      children: [
+                        TextSpan(
+                          text: item.fromUsername.isNotEmpty
+                              ? item.fromUsername
+                              : '有人',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        TextSpan(
+                          text: ' ${item.actionText}',
+                          style: TextStyle(color: scheme.onSurfaceVariant),
+                        ),
+                        if (emoji != null) TextSpan(text: ' $emoji'),
+                      ],
+                    ),
+                  ),
+                  if (summary.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      summary,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: scheme.onSurfaceVariant,
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  Text(
+                    timeAgo(item.createdAt),
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
             ),
-            child: Text(
-              item.typeLabel,
-              style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w600),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                HtmlContent(
-                  html: item.contentHtml,
-                  onFloorLink: onOpen,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  timeAgo(item.createdAt),
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
