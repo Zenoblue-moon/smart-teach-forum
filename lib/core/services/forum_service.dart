@@ -422,8 +422,12 @@ class ForumService {
     );
     // 携带会话 Cookie + CSRF Token（fof/upload 必须校验 CSRF，否则返回 400）。
     _api.authHeaders.forEach((k, v) => req.headers[k] = v);
+
+    // 注意：fof/upload 的字段名是 `files[]`（带数组括号），服务端通过
+    // `files` 键读取上传文件。用 `file` 会导致服务端收不到文件，
+    // 返回「no_files_made_it_to_upload / 请上传小于 xx kb 的文件」。
     req.files.add(http.MultipartFile.fromBytes(
-      'file',
+      'files[]',
       bytes,
       filename: filename,
       contentType: _mediaTypeFor(filename),
@@ -460,14 +464,30 @@ class ForumService {
       throw ApiException(msg, statusCode: res.statusCode);
     }
 
-    // fof/upload 返回 JSON:API 风格：{"data":{"attributes":{"url":"..."}}}
-    // 兼容 {"link":"..."} 等返回格式。
+    // fof/upload 返回 JSON:API 列表风格：
+    // {"data":[{"type":"files","id":"...","attributes":{"url":"..."}}]}
+    // 兼容旧版单对象 {"data":{"attributes":{"url":"..."}}} 与 {"link":"..."}。
     String? url;
     try {
-      final json = jsonDecode(res.body) as Map<String, dynamic>;
-      url = json['data']?['attributes']?['url'] as String?;
-      url ??= json['link'] as String?;
-      url ??= json['data']?['attributes']?['path'] as String?;
+      final json = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+      final data = json['data'];
+      if (data is List && data.isNotEmpty) {
+        final first = data.first;
+        if (first is Map) {
+          final attrs = first['attributes'];
+          if (attrs is Map) {
+            url = attrs['url']?.toString();
+            url ??= attrs['path']?.toString();
+          }
+        }
+      } else if (data is Map) {
+        final attrs = data['attributes'];
+        if (attrs is Map) {
+          url = attrs['url']?.toString();
+          url ??= attrs['path']?.toString();
+        }
+      }
+      url ??= json['link']?.toString();
     } catch (_) {}
     if (url == null || url.isEmpty) {
       throw ApiException('图片上传成功但未返回地址');

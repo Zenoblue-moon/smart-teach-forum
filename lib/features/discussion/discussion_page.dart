@@ -200,19 +200,31 @@ class _DiscussionPageState extends State<DiscussionPage> {
     });
   }
 
-  void _scrollToPost(int number) {
+  /// 滚动定位到指定楼层。
+  ///
+  /// [instant] 为 true 时直接跳转（快速跳转时间轴拖动时使用），
+  /// 否则使用平滑动画。
+  void _scrollToPost(int number, {bool instant = false}) {
     final key = _keys[number];
     if (key != null && key.currentContext != null) {
       Scrollable.ensureVisible(
         key.currentContext!,
-        duration: const Duration(milliseconds: 350),
-        curve: Curves.easeInOut,
+        duration: instant ? Duration.zero : const Duration(milliseconds: 350),
+        curve: instant ? Curves.easeOut : Curves.easeInOut,
         alignment: 0.05,
       );
+      return;
+    }
+
+    // 目标楼层尚未渲染：估算位置。
+    final target = ((number - 1) * 220.0).clamp(0.0, double.infinity);
+    if (instant) {
+      if (_scroll.hasClients) {
+        _scroll.jumpTo(target.clamp(0.0, _scroll.position.maxScrollExtent));
+      }
     } else {
-      // 估算滚动，待渲染后精确定位。
       _scroll.animateTo(
-        (number - 1) * 220.0,
+        target,
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
@@ -227,6 +239,31 @@ class _DiscussionPageState extends State<DiscussionPage> {
           );
         }
       });
+    }
+
+    // 若目标楼层尚未加载，后台补载后再精确定位。
+    if (!_hasFloor(number) && _hasMore && !_loadingMore) {
+      _ensureFloorLoaded(number).then((_) {
+        if (!mounted) return;
+        final k = _keys[number];
+        if (k != null && k.currentContext != null) {
+          Scrollable.ensureVisible(
+            k.currentContext!,
+            duration: instant ? Duration.zero : const Duration(milliseconds: 250),
+            curve: Curves.easeInOut,
+            alignment: 0.05,
+          );
+        }
+      });
+    }
+  }
+
+  /// 顺序补载，直到目标楼层加载完成。
+  Future<void> _ensureFloorLoaded(int number) async {
+    var guard = 0;
+    while (!_hasFloor(number) && _hasMore && guard < 100) {
+      await _loadMore();
+      guard++;
     }
   }
 
@@ -248,9 +285,9 @@ class _DiscussionPageState extends State<DiscussionPage> {
     return _posts.last.number ?? _posts.length;
   }
 
-  Post? get _currentPost {
+  Post? _postForFloor(int floor) {
     for (final p in _posts) {
-      if (p.number == _currentFloor) return p;
+      if (p.number == floor) return p;
     }
     return null;
   }
@@ -290,90 +327,106 @@ class _DiscussionPageState extends State<DiscussionPage> {
     });
   }
 
-  /// 快速跳转面板：最早内容 / 当前位置（x/y 条 + 日期）/ 最新回复。
+  /// 快速跳转面板：最早内容 / 可拖动时间轴（x/y 条 + 日期）/ 最新回复。
+  ///
+  /// 时间轴是一个可拖动的竖向滑块，拖动到哪一条，正文列表就定位到哪一条。
   void _showQuickJump() {
     final total = _totalFloors;
-    final current = _currentFloor > 0 ? _currentFloor : 1;
-    final post = _currentPost;
+    if (total <= 0) return;
     final scheme = Theme.of(context).colorScheme;
-    final progress = total > 0 ? (current / total).clamp(0.0, 1.0) : 0.0;
 
     showModalBottomSheet<void>(
       context: context,
       builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 顶部：最早内容
-                _jumpOption(
-                  ctx,
-                  Icons.keyboard_double_arrow_up,
-                  '最早内容',
-                  _jumpToEarliest,
-                ),
-                const SizedBox(height: 4),
-                // 中间：时间轴 + x/y 条 + 日期
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      SizedBox(
-                        width: 32,
-                        height: 60,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            Container(
-                              width: 2,
-                              height: 60,
-                              color: Colors.grey.shade300,
-                            ),
-                            Align(
-                              alignment: Alignment.topCenter,
-                              child: Container(
-                                width: 4,
-                                height: (60 * progress).clamp(4.0, 60.0),
-                                color: scheme.primary,
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final current = _currentFloor > 0 ? _currentFloor.clamp(1, total) : 1;
+            final post = _postForFloor(current);
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 顶部：最早内容
+                    _jumpOption(
+                      ctx,
+                      Icons.keyboard_double_arrow_up,
+                      '最早内容',
+                      _jumpToEarliest,
+                    ),
+                    const SizedBox(height: 4),
+                    // 中间：可拖动时间轴 + x/y 条 + 日期
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          if (total > 1)
+                            SizedBox(
+                              height: 150,
+                              child: RotatedBox(
+                                quarterTurns: 1,
+                                child: Slider(
+                                  value: current.toDouble(),
+                                  min: 1,
+                                  max: total.toDouble(),
+                                  activeColor: scheme.primary,
+                                  inactiveColor: Colors.grey.shade300,
+                                  onChanged: (v) {
+                                    final floor = v.round().clamp(1, total);
+                                    if (floor == _currentFloor) return;
+                                    _currentFloor = floor;
+                                    setSheetState(() {});
+                                    _scrollToPost(floor, instant: true);
+                                  },
+                                ),
+                              ),
+                            )
+                          else
+                            const SizedBox(
+                              height: 150,
+                              width: 32,
+                              child: Center(
+                                child: Text('1', style: TextStyle(color: Colors.grey)),
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '$current / $total 条',
-                            style: const TextStyle(
-                                fontSize: 17, fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _yearMonth(post?.createdAt),
-                            style: const TextStyle(
-                                fontSize: 13, color: Colors.grey),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '$current / $total 条',
+                                  style: const TextStyle(
+                                      fontSize: 17, fontWeight: FontWeight.bold),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _yearMonth(post?.createdAt),
+                                  style: const TextStyle(
+                                      fontSize: 13, color: Colors.grey),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 4),
+                    // 底部：最新回复
+                    _jumpOption(
+                      ctx,
+                      Icons.keyboard_double_arrow_down,
+                      '最新回复',
+                      _jumpToLatest,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 4),
-                // 底部：最新回复
-                _jumpOption(
-                  ctx,
-                  Icons.keyboard_double_arrow_down,
-                  '最新回复',
-                  _jumpToLatest,
-                ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
