@@ -159,7 +159,7 @@ class _PostMentionInline extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.reply, size: 15, color: color),
+          Icon(Icons.reply, size: 16, color: color),
           const SizedBox(width: 4),
           Text(
             name,

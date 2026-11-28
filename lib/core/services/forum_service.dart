@@ -167,6 +167,100 @@ class ForumService {
     });
   }
 
+  /// 设置状态（clarkwinkelmann/status 扩展）。
+  ///
+  /// 通过 `PATCH /users/{id}` 更新 `clarkwinkelmannStatusEmoji` 与
+  /// `clarkwinkelmannStatusText`。传 null 或空字符串表示清除该字段。
+  Future<ForumUser> updateStatus(
+    String userId, {
+    String? emoji,
+    String? text,
+  }) async {
+    final doc = await _api.patch('/users/$userId', body: {
+      'data': {
+        'type': 'users',
+        'id': userId,
+        'attributes': {
+          'clarkwinkelmannStatusEmoji': (emoji == null || emoji.isEmpty) ? null : emoji,
+          'clarkwinkelmannStatusText': (text == null || text.isEmpty) ? null : text,
+        },
+      },
+    });
+    return ForumUser.fromJson(doc.data!);
+  }
+
+  /// 上传头像（Flarum 核心端点 `POST /users/{id}/avatar`，字段 `avatar`）。
+  Future<ForumUser> uploadAvatar(
+    String userId,
+    String filename,
+    List<int> bytes,
+  ) {
+    return _uploadUserMedia('/users/$userId/avatar', 'avatar', filename, bytes);
+  }
+
+  /// 上传背景图（sycho/profile-cover 端点 `POST /users/{id}/cover`，字段 `cover`）。
+  Future<ForumUser> uploadCover(
+    String userId,
+    String filename,
+    List<int> bytes,
+  ) {
+    return _uploadUserMedia('/users/$userId/cover', 'cover', filename, bytes);
+  }
+
+  /// 删除背景图（`DELETE /users/{id}/cover`）。
+  Future<void> deleteCover(String userId) async {
+    await _api.delete('/users/$userId/cover');
+  }
+
+  /// 删除头像（`DELETE /users/{id}/avatar`）。
+  Future<void> deleteAvatar(String userId) async {
+    await _api.delete('/users/$userId/avatar');
+  }
+
+  /// 通用用户媒体上传（头像 / 背景图），返回更新后的用户对象。
+  Future<ForumUser> _uploadUserMedia(
+    String path,
+    String field,
+    String filename,
+    List<int> bytes,
+  ) async {
+    final req = http.MultipartRequest(
+      'POST',
+      Uri.parse('${AppConfig.apiUrl}$path'),
+    );
+    _api.authHeaders.forEach((k, v) => req.headers[k] = v);
+    req.files.add(http.MultipartFile.fromBytes(
+      field,
+      bytes,
+      filename: filename,
+      contentType: _mediaTypeFor(filename),
+    ));
+
+    final streamed = await req.send().timeout(const Duration(seconds: 60));
+    final res = await http.Response.fromStream(streamed);
+
+    if (res.statusCode >= 400) {
+      String msg = '上传失败（HTTP ${res.statusCode}）';
+      try {
+        final json = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+        final errs = json['errors'];
+        if (errs is List && errs.isNotEmpty && errs.first is Map) {
+          final detail = (errs.first as Map)['detail']?.toString();
+          if (detail != null && detail.isNotEmpty) msg = detail;
+        }
+      } catch (_) {}
+      throw ApiException(msg, statusCode: res.statusCode);
+    }
+
+    try {
+      final json = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+      final doc = ApiDocument(json);
+      doc.indexIncluded();
+      if (doc.data != null) return ForumUser.fromJson(doc.data!);
+    } catch (_) {}
+    throw ApiException('上传成功但返回数据异常');
+  }
+
   /// 按用户名（slug）查找用户，用于 @提及 跳转。
   ///
   /// 论坛对游客关闭了用户搜索，登录后也可能无权限，因此失败返回 null，

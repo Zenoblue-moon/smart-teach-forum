@@ -328,131 +328,20 @@ class _DiscussionPageState extends State<DiscussionPage> {
   }
 
   /// 快速跳转面板：最早内容 / 可拖动时间轴（x/y 条 + 日期）/ 最新回复。
-  ///
-  /// 时间轴是一个可拖动的竖向滑块，拖动到哪一条，正文列表就定位到哪一条。
   void _showQuickJump() {
     final total = _totalFloors;
     if (total <= 0) return;
-    final scheme = Theme.of(context).colorScheme;
+    final initialFloor = _currentFloor > 0 ? _currentFloor.clamp(1, total) : 1;
 
     showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            final current = _currentFloor > 0 ? _currentFloor.clamp(1, total) : 1;
-            final post = _postForFloor(current);
-
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // 顶部：最早内容
-                    _jumpOption(
-                      ctx,
-                      Icons.keyboard_double_arrow_up,
-                      '最早内容',
-                      _jumpToEarliest,
-                    ),
-                    const SizedBox(height: 4),
-                    // 中间：可拖动时间轴 + x/y 条 + 日期
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          if (total > 1)
-                            SizedBox(
-                              height: 150,
-                              child: RotatedBox(
-                                quarterTurns: 1,
-                                child: Slider(
-                                  value: current.toDouble(),
-                                  min: 1,
-                                  max: total.toDouble(),
-                                  activeColor: scheme.primary,
-                                  inactiveColor: Colors.grey.shade300,
-                                  onChanged: (v) {
-                                    final floor = v.round().clamp(1, total);
-                                    if (floor == _currentFloor) return;
-                                    _currentFloor = floor;
-                                    setSheetState(() {});
-                                    _scrollToPost(floor, instant: true);
-                                  },
-                                ),
-                              ),
-                            )
-                          else
-                            const SizedBox(
-                              height: 150,
-                              width: 32,
-                              child: Center(
-                                child: Text('1', style: TextStyle(color: Colors.grey)),
-                              ),
-                            ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '$current / $total 条',
-                                  style: const TextStyle(
-                                      fontSize: 17, fontWeight: FontWeight.bold),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  _yearMonth(post?.createdAt),
-                                  style: const TextStyle(
-                                      fontSize: 13, color: Colors.grey),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    // 底部：最新回复
-                    _jumpOption(
-                      ctx,
-                      Icons.keyboard_double_arrow_down,
-                      '最新回复',
-                      _jumpToLatest,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _jumpOption(
-    BuildContext ctx,
-    IconData icon,
-    String label,
-    VoidCallback onTap,
-  ) {
-    return InkWell(
-      onTap: () {
-        Navigator.pop(ctx);
-        onTap();
-      },
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
-        child: Row(
-          children: [
-            Icon(icon, size: 22),
-            const SizedBox(width: 10),
-            Text(label, style: const TextStyle(fontSize: 15)),
-          ],
-        ),
+      builder: (_) => _QuickJumpSheet(
+        total: total,
+        initialFloor: initialFloor,
+        yearMonthFor: (floor) => _yearMonth(_postForFloor(floor)?.createdAt),
+        onJump: (floor) => _scrollToPost(floor, instant: true),
+        onEarliest: _jumpToEarliest,
+        onLatest: _jumpToLatest,
       ),
     );
   }
@@ -838,6 +727,160 @@ class _DiscussionPageState extends State<DiscussionPage> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// 快速跳转面板（独立 StatefulWidget，保证拖动时滑块跟手、滚动不打架）。
+class _QuickJumpSheet extends StatefulWidget {
+  const _QuickJumpSheet({
+    required this.total,
+    required this.initialFloor,
+    required this.yearMonthFor,
+    required this.onJump,
+    required this.onEarliest,
+    required this.onLatest,
+  });
+
+  final int total;
+  final int initialFloor;
+  final String Function(int floor) yearMonthFor;
+  final void Function(int floor) onJump;
+  final VoidCallback onEarliest;
+  final VoidCallback onLatest;
+
+  @override
+  State<_QuickJumpSheet> createState() => _QuickJumpSheetState();
+}
+
+class _QuickJumpSheetState extends State<_QuickJumpSheet> {
+  late int _floor;
+  DateTime? _lastJump;
+
+  @override
+  void initState() {
+    super.initState();
+    _floor = widget.initialFloor;
+  }
+
+  void _throttledJump(int floor) {
+    final now = DateTime.now();
+    if (_lastJump == null ||
+        now.difference(_lastJump!).inMilliseconds >= 40) {
+      _lastJump = now;
+      widget.onJump(floor);
+    }
+  }
+
+  void _onChanged(double v) {
+    final floor = v.round().clamp(1, widget.total);
+    setState(() => _floor = floor);
+    _throttledJump(floor);
+  }
+
+  void _onChangeEnd(double v) {
+    final floor = v.round().clamp(1, widget.total);
+    widget.onJump(floor);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final month = widget.yearMonthFor(_floor);
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _option(Icons.keyboard_double_arrow_up, '最早内容', widget.onEarliest),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  if (widget.total > 1)
+                    SizedBox(
+                      height: 150,
+                      child: RotatedBox(
+                        quarterTurns: 1,
+                        child: SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 3,
+                            thumbShape:
+                                const RoundSliderThumbShape(enabledThumbRadius: 9),
+                            overlayShape:
+                                const RoundSliderOverlayShape(overlayRadius: 18),
+                          ),
+                          child: Slider(
+                            value: _floor.toDouble(),
+                            min: 1,
+                            max: widget.total.toDouble(),
+                            divisions: widget.total - 1,
+                            activeColor: scheme.primary,
+                            inactiveColor: Colors.grey.shade300,
+                            onChanged: _onChanged,
+                            onChangeEnd: _onChangeEnd,
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    const SizedBox(
+                      height: 150,
+                      width: 36,
+                      child: Center(
+                        child: Text('1', style: TextStyle(color: Colors.grey)),
+                      ),
+                    ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$_floor / ${widget.total} 条',
+                          style: const TextStyle(
+                              fontSize: 17, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          month,
+                          style: const TextStyle(fontSize: 13, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            _option(Icons.keyboard_double_arrow_down, '最新回复', widget.onLatest),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _option(IconData icon, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: () {
+        Navigator.pop(context);
+        onTap();
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+        child: Row(
+          children: [
+            Icon(icon, size: 22),
+            const SizedBox(width: 10),
+            Text(label, style: const TextStyle(fontSize: 15)),
+          ],
+        ),
       ),
     );
   }
