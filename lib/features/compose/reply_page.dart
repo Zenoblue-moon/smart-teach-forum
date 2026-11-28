@@ -57,9 +57,8 @@ class _ReplyPageState extends State<ReplyPage> {
 
     final q = widget.quoteContent;
     if (q != null && q.isNotEmpty) {
-      final header = author != null && author.isNotEmpty ? '**$author** 说：\n' : '';
       final quoted = q.split('\n').map((l) => '> $l').join('\n');
-      parts.add('$header$quoted');
+      parts.add(quoted);
     }
 
     return parts.isEmpty ? '' : '${parts.join('\n\n')}\n\n';

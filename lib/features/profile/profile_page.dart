@@ -1,20 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
-import '../../core/config.dart';
 import '../../core/models.dart';
 import '../../core/services/app_state.dart';
 import '../../core/services/forum_service.dart';
 import '../../core/theme_presets.dart';
 import '../../widgets/user_avatar.dart';
 import '../auth/web_login_page.dart';
-import '../notifications/notifications_page.dart';
 import 'about_page.dart';
+import 'account_security_page.dart';
+import 'edit_profile_page.dart';
 import 'user_page.dart';
 
-/// 「我的」页：登录态、个人主页入口、我的内容、个性化设置。
+/// 「我的」页：登录态、个人主页入口、账号与个性化设置。
 class ProfilePage extends StatefulWidget {
   const ProfilePage({Key? key}) : super(key: key);
 
@@ -60,52 +59,15 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Future<void> _openWeb(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    try {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } catch (_) {}
+  void _openEditProfile(ForumUser me) {
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => EditProfilePage(user: me)))
+        .then((_) => _loadMe());
   }
 
-  void _showFeedSheet(AuthState auth) {
-    final username = _selfUser(auth).username;
-    final rss = '${AppConfig.baseUrl}/rss/u/$username/posts';
-    final atom = '${AppConfig.baseUrl}/atom/u/$username/posts';
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Text('Feed 订阅链接', style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-            _feedTile(ctx, 'RSS', rss),
-            _feedTile(ctx, 'Atom', atom),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _feedTile(BuildContext ctx, String label, String url) {
-    return ListTile(
-      leading: const Icon(Icons.rss_feed),
-      title: Text(label),
-      subtitle: Text(url, maxLines: 2, overflow: TextOverflow.ellipsis),
-      trailing: IconButton(
-        icon: const Icon(Icons.copy),
-        onPressed: () {
-          Clipboard.setData(ClipboardData(text: url));
-          Navigator.pop(ctx);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('链接已复制'), duration: Duration(seconds: 1)),
-          );
-        },
-      ),
+  void _openAccountSecurity(ForumUser me) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => AccountSecurityPage(user: me)),
     );
   }
 
@@ -119,10 +81,6 @@ class _ProfilePageState extends State<ProfilePage> {
         padding: const EdgeInsets.all(16),
         children: [
           if (auth.isLoggedIn) ..._buildLoggedIn(auth) else ..._buildGuest(),
-          if (auth.isLoggedIn) ...[
-            const SizedBox(height: 8),
-            _buildMyContentCard(auth),
-          ],
           const SizedBox(height: 8),
           _buildAppearanceCard(),
           const SizedBox(height: 8),
@@ -223,27 +181,6 @@ class _ProfilePageState extends State<ProfilePage> {
     ];
   }
 
-  Widget _buildMyContentCard(AuthState auth) {
-    return Card(
-      child: Column(
-        children: [
-          const ListTile(
-            leading: Icon(Icons.widgets_outlined),
-            title: Text('我的内容', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-          _menuTile(Icons.article_outlined, '我的主题', () => _openSelf(1)),
-          _menuTile(Icons.chat_bubble_outline, '我的回复', () => _openSelf(0)),
-          _menuTile(Icons.alternate_email, '我的提及', () => _openSelf(4)),
-          _menuTile(Icons.how_to_vote_outlined, '我的投票', () => _openSelf(3)),
-          _menuTile(Icons.military_tech_outlined, '我的徽章', () => _openSelf(2)),
-          _menuTile(Icons.rss_feed, 'Feed 订阅链接', () => _showFeedSheet(auth)),
-          _menuTile(Icons.notifications_outlined, '通知', () => Navigator.of(context)
-              .push(MaterialPageRoute(builder: (_) => const NotificationsPage()))),
-        ],
-      ),
-    );
-  }
-
   Widget _buildAccountCard(AuthState auth) {
     final me = _selfUser(auth);
     return Card(
@@ -253,16 +190,8 @@ class _ProfilePageState extends State<ProfilePage> {
             leading: Icon(Icons.manage_accounts_outlined),
             title: Text('账号', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
-          _menuTile(
-            Icons.edit_outlined,
-            '编辑资料',
-            () => _openWeb('${AppConfig.baseUrl}/u/${me.username}/edit'),
-          ),
-          _menuTile(
-            Icons.lock_outline,
-            '账号与安全',
-            () => _openWeb('${AppConfig.baseUrl}/settings'),
-          ),
+          _menuTile(Icons.edit_outlined, '编辑资料', () => _openEditProfile(me)),
+          _menuTile(Icons.lock_outline, '账号与安全', () => _openAccountSecurity(me)),
         ],
       ),
     );

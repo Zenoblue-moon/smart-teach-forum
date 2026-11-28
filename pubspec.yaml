@@ -36,6 +36,8 @@ dependencies:
 
   # 网络请求
   http: ^0.13.5
+  # 上传时的 MIME 类型（http 的传递依赖，显式声明）
+  http_parser: ^4.0.2
   # 本地存储（登录态、最近搜索、主题偏好）
   shared_preferences: ^2.0.15
   # 图片缓存
@@ -52,6 +54,8 @@ dependencies:
   intl: ^0.17.0
   # 从相册选择图片（发帖/回帖上传）
   image_picker: 0.8.5+3
+  # 图片压缩（确保上传不超过论坛大小限制）
+  image: 3.1.3
   # 内置浏览器 SSO 登录（2.0.4 与 flutter_html 2.2.1 兼容）
   webview_flutter: 2.0.4
   # Android 12+ 动态取色

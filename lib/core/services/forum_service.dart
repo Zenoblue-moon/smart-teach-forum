@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 import '../api_client.dart';
 import '../config.dart';
@@ -136,6 +137,36 @@ class ForumService {
     }
   }
 
+  /// 更新个人资料（显示名 / 简介），返回更新后的用户。
+  Future<ForumUser> updateProfile(
+    String userId, {
+    String? displayName,
+    String? bio,
+  }) async {
+    final attrs = <String, dynamic>{};
+    if (displayName != null) attrs['displayName'] = displayName;
+    if (bio != null) attrs['bio'] = bio;
+    final doc = await _api.patch('/users/$userId', body: {
+      'data': {
+        'type': 'users',
+        'id': userId,
+        'attributes': attrs,
+      },
+    });
+    return ForumUser.fromJson(doc.data!);
+  }
+
+  /// 修改自己的密码（无需原密码，改邮箱才需要原密码）。
+  Future<void> changePassword(String userId, String newPassword) async {
+    await _api.patch('/users/$userId', body: {
+      'data': {
+        'type': 'users',
+        'id': userId,
+        'attributes': {'password': newPassword},
+      },
+    });
+  }
+
   /// 按用户名（slug）查找用户，用于 @提及 跳转。
   ///
   /// 论坛对游客关闭了用户搜索，登录后也可能无权限，因此失败返回 null，
@@ -195,6 +226,17 @@ class ForumService {
         .toList();
     return PageResult(items,
         nextOffset: items.length >= limit ? offset + limit : null);
+  }
+
+  /// 单个帖子（用于渲染楼层引用时获取被引用内容）。
+  Future<Post?> getPost(String id) async {
+    try {
+      final doc = await _api.get('/posts/$id', query: {'include': 'user,discussion'});
+      if (doc.data == null) return null;
+      return Post.fromJson(doc.data!, doc);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 用户的徽章列表（含徽章定义与佩戴信息）。
@@ -380,7 +422,12 @@ class ForumService {
     );
     // 携带会话 Cookie + CSRF Token（fof/upload 必须校验 CSRF，否则返回 400）。
     _api.authHeaders.forEach((k, v) => req.headers[k] = v);
-    req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+    req.files.add(http.MultipartFile.fromBytes(
+      'file',
+      bytes,
+      filename: filename,
+      contentType: _mediaTypeFor(filename),
+    ));
 
     final streamed = await req.send().timeout(const Duration(seconds: 60));
     final res = await http.Response.fromStream(streamed);
@@ -391,10 +438,20 @@ class ForumService {
         final json = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
         final errs = json['errors'];
         if (errs is List && errs.isNotEmpty && errs.first is Map) {
-          final code = (errs.first as Map)['code']?.toString();
-          final detail = (errs.first as Map)['detail']?.toString();
+          final first = errs.first as Map;
+          final code = first['code']?.toString();
+          final detail = first['detail']?.toString();
           if (detail != null && detail.isNotEmpty) {
             msg = '图片上传失败：$detail';
+            // 提示文件过大时给出明确的体积说明。
+            final source = first['source']?.toString();
+            final params = first['parameters'];
+            if (source == 'fof-upload' && params is Map) {
+              final max = params['max']?.toString();
+              if (max != null && max.isNotEmpty) {
+                msg = '图片过大：请上传小于 $max KB 的图片';
+              }
+            }
           } else if (code != null && code.isNotEmpty) {
             msg = '图片上传失败：$code';
           }
@@ -416,5 +473,15 @@ class ForumService {
       throw ApiException('图片上传成功但未返回地址');
     }
     return url;
+  }
+
+  /// 根据文件名推断 MIME 类型，供上传 multipart 使用。
+  static MediaType _mediaTypeFor(String filename) {
+    final lower = filename.toLowerCase();
+    if (lower.endsWith('.png')) return MediaType('image', 'png');
+    if (lower.endsWith('.gif')) return MediaType('image', 'gif');
+    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
+    if (lower.endsWith('.bmp')) return MediaType('image', 'bmp');
+    return MediaType('image', 'jpeg');
   }
 }

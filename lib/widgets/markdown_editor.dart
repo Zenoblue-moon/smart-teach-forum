@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 
 import '../core/services/forum_service.dart';
@@ -59,12 +60,21 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
     );
   }
 
+  /// 上传大小安全阈值（1.2MB）。论坛 fof/upload 对超大文件会在 PHP 层直接
+  /// 丢弃并提示「请上传小于 xx KB 的文件」，因此这里强制压缩到阈值以内。
+  static const int _maxUploadBytes = 1200 * 1024;
+
   Future<void> _pickAndUpload() async {
     if (_uploading) return;
     final picker = ImagePicker();
     XFile? file;
     try {
-      file = await picker.pickImage(source: ImageSource.gallery, maxWidth: 1920);
+      file = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 80,
+      );
     } catch (_) {
       file = null;
     }
@@ -72,7 +82,8 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
 
     setState(() => _uploading = true);
     try {
-      final bytes = await file.readAsBytes();
+      List<int> bytes = await file.readAsBytes();
+      bytes = await _compressIfNeeded(bytes);
       final url = await ForumService.instance.uploadImage(file.name, bytes);
       if (!mounted) return;
       _wrap('![图片](', ')', placeholder: url);
@@ -86,6 +97,35 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
       );
     } finally {
       if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  /// 若图片仍超过安全阈值，解码后重新编码为 JPEG 并逐步降质，确保足够小。
+  Future<List<int>> _compressIfNeeded(List<int> bytes) async {
+    if (bytes.length <= _maxUploadBytes) return bytes;
+
+    try {
+      img.Image? decoded = img.decodeImage(bytes);
+      if (decoded == null) return bytes;
+
+      // 先按宽高缩放到最长边 1440。
+      if (decoded.width > 1440 || decoded.height > 1440) {
+        decoded = img.copyResize(
+          decoded,
+          width: decoded.width >= decoded.height ? 1440 : null,
+          height: decoded.height > decoded.width ? 1440 : null,
+        );
+      }
+
+      // 逐步降低 JPEG 质量，直到满足阈值。
+      for (final quality in const [80, 70, 60, 50, 40]) {
+        final jpg = img.encodeJpg(decoded, quality: quality);
+        if (jpg.length <= _maxUploadBytes) return jpg;
+      }
+      // 最后兜底：最低质量仍超限则返回最小体积的编码。
+      return img.encodeJpg(decoded, quality: 30);
+    } catch (_) {
+      return bytes;
     }
   }
 

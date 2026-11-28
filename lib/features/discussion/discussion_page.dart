@@ -46,6 +46,7 @@ class _DiscussionPageState extends State<DiscussionPage> {
   bool _hasMore = true;
   String? _error;
   int? _highlightFloor;
+  int _currentFloor = 0;
   List<Reaction> _reactions = const [];
   final Set<String> _pendingVote = {};
   final Set<String> _pendingReact = {};
@@ -77,6 +78,36 @@ class _DiscussionPageState extends State<DiscussionPage> {
   void _onScroll() {
     if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 400) {
       _loadMore();
+    }
+    _updateCurrentFloor();
+  }
+
+  /// 追踪当前视口顶部的楼层号（用于快速跳转面板显示 x / y 条）。
+  void _updateCurrentFloor() {
+    if (!_scroll.hasClients || !mounted) return;
+    final position = _scroll.position;
+    final viewportDim = position.viewportDimension;
+    final viewportCtx = position.context.storageContext;
+    final viewportBox = viewportCtx.findRenderObject() as RenderBox?;
+    if (viewportBox == null || !viewportBox.attached) return;
+    final viewportBottom = viewportBox.localToGlobal(Offset.zero).dy + viewportDim;
+
+    int? current;
+    final numbers = _keys.keys.toList()..sort();
+    for (final n in numbers) {
+      final ctx = _keys[n]?.currentContext;
+      if (ctx == null) continue;
+      final box = ctx.findRenderObject() as RenderBox?;
+      if (box == null || !box.attached || !box.hasSize) continue;
+      final top = box.localToGlobal(Offset.zero).dy;
+      if (top < viewportBottom) {
+        current = n;
+        break;
+      }
+    }
+    if (current != null && current != _currentFloor) {
+      final floor = current;
+      setState(() => _currentFloor = floor);
     }
   }
 
@@ -207,6 +238,169 @@ class _DiscussionPageState extends State<DiscussionPage> {
     Clipboard.setData(ClipboardData(text: url));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('链接已复制'), duration: Duration(seconds: 1)),
+    );
+  }
+
+  int get _totalFloors {
+    final d = _discussion;
+    if (d != null && d.lastPostNumber > 0) return d.lastPostNumber;
+    if (_posts.isEmpty) return 0;
+    return _posts.last.number ?? _posts.length;
+  }
+
+  Post? get _currentPost {
+    for (final p in _posts) {
+      if (p.number == _currentFloor) return p;
+    }
+    return null;
+  }
+
+  String _yearMonth(String? iso) {
+    if (iso == null || iso.isEmpty) return '';
+    final t = DateTime.tryParse(iso)?.toLocal();
+    if (t == null) return '';
+    return '${t.year}年${t.month}月';
+  }
+
+  Future<void> _jumpToEarliest() async {
+    if (_scroll.hasClients) {
+      await _scroll.animateTo(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  Future<void> _jumpToLatest() async {
+    // 补齐剩余楼层后再定位到底部。
+    var guard = 0;
+    while (_hasMore && !_loadingMore && guard < 100) {
+      await _loadMore();
+      guard++;
+    }
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      _scroll.animateTo(
+        _scroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  /// 快速跳转面板：最早内容 / 当前位置（x/y 条 + 日期）/ 最新回复。
+  void _showQuickJump() {
+    final total = _totalFloors;
+    final current = _currentFloor > 0 ? _currentFloor : 1;
+    final post = _currentPost;
+    final scheme = Theme.of(context).colorScheme;
+    final progress = total > 0 ? (current / total).clamp(0.0, 1.0) : 0.0;
+
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 顶部：最早内容
+                _jumpOption(
+                  ctx,
+                  Icons.keyboard_double_arrow_up,
+                  '最早内容',
+                  _jumpToEarliest,
+                ),
+                const SizedBox(height: 4),
+                // 中间：时间轴 + x/y 条 + 日期
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 32,
+                        height: 60,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Container(
+                              width: 2,
+                              height: 60,
+                              color: Colors.grey.shade300,
+                            ),
+                            Align(
+                              alignment: Alignment.topCenter,
+                              child: Container(
+                                width: 4,
+                                height: (60 * progress).clamp(4.0, 60.0),
+                                color: scheme.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '$current / $total 条',
+                            style: const TextStyle(
+                                fontSize: 17, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _yearMonth(post?.createdAt),
+                            style: const TextStyle(
+                                fontSize: 13, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                // 底部：最新回复
+                _jumpOption(
+                  ctx,
+                  Icons.keyboard_double_arrow_down,
+                  '最新回复',
+                  _jumpToLatest,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _jumpOption(
+    BuildContext ctx,
+    IconData icon,
+    String label,
+    VoidCallback onTap,
+  ) {
+    return InkWell(
+      onTap: () {
+        Navigator.pop(ctx);
+        onTap();
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+        child: Row(
+          children: [
+            Icon(icon, size: 22),
+            const SizedBox(width: 10),
+            Text(label, style: const TextStyle(fontSize: 15)),
+          ],
+        ),
+      ),
     );
   }
 
@@ -430,10 +624,35 @@ class _DiscussionPageState extends State<DiscussionPage> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.link),
-            tooltip: '复制链接',
-            onPressed: () => _copyLink(),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: '更多',
+            onSelected: (v) {
+              if (v == 'copy') _copyLink();
+              if (v == 'jump') _showQuickJump();
+            },
+            itemBuilder: (ctx) => [
+              PopupMenuItem(
+                value: 'copy',
+                child: Row(
+                  children: const [
+                    Icon(Icons.link, size: 20),
+                    SizedBox(width: 10),
+                    Text('复制链接'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'jump',
+                child: Row(
+                  children: const [
+                    Icon(Icons.swap_vert, size: 20),
+                    SizedBox(width: 10),
+                    Text('快速跳转'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
