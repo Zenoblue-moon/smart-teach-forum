@@ -58,9 +58,18 @@ class ApiClient {
   }
 
   Map<String, String> get _headers {
+    final h = authHeaders;
+    h['Content-Type'] = 'application/json';
+    return h;
+  }
+
+  /// 认证头（不含 Content-Type）。
+  ///
+  /// 同时携带 API Token（若存在）与会话 Cookie + CSRF Token，
+  /// 供 multipart 上传等需要认证的请求使用。
+  Map<String, String> get authHeaders {
     final h = <String, String>{
       'Accept': 'application/json',
-      'Content-Type': 'application/json',
     };
     if (_token != null && _token!.isNotEmpty) {
       h['Authorization'] = 'Token $_token';

@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/config.dart';
 import '../../core/models.dart';
 import '../../core/services/app_state.dart';
 import '../../core/services/forum_service.dart';
 import '../../core/theme_presets.dart';
 import '../../widgets/user_avatar.dart';
 import '../auth/web_login_page.dart';
+import '../notifications/notifications_page.dart';
 import 'about_page.dart';
+import 'user_page.dart';
 
-/// 「我的」页：登录态、统计与个性化设置。
+/// 「我的」页：登录态、个人主页入口、我的内容、个性化设置。
 class ProfilePage extends StatefulWidget {
   const ProfilePage({Key? key}) : super(key: key);
 
@@ -34,6 +38,77 @@ class _ProfilePageState extends State<ProfilePage> {
     if (mounted) setState(() => _me = user);
   }
 
+  /// 构建「我自己」的用户对象（_me 未加载完时用登录态兜底）。
+  ForumUser _selfUser(AuthState auth) {
+    if (_me != null) return _me!;
+    final attrs = <String, dynamic>{
+      'username': auth.username ?? '',
+      'displayName': auth.displayName ?? auth.username ?? '',
+      'avatarUrl': auth.avatarUrl ?? '',
+    };
+    return ForumUser.fromJson(<String, dynamic>{
+      'id': auth.userId ?? '',
+      'attributes': attrs,
+    });
+  }
+
+  void _openSelf(int tab) {
+    final auth = context.read<AuthState>();
+    if (!auth.isLoggedIn) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => UserPage(user: _selfUser(auth), initialTab: tab)),
+    );
+  }
+
+  Future<void> _openWeb(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+
+  void _showFeedSheet(AuthState auth) {
+    final username = _selfUser(auth).username;
+    final rss = '${AppConfig.baseUrl}/rss/u/$username/posts';
+    final atom = '${AppConfig.baseUrl}/atom/u/$username/posts';
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text('Feed 订阅链接', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            _feedTile(ctx, 'RSS', rss),
+            _feedTile(ctx, 'Atom', atom),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _feedTile(BuildContext ctx, String label, String url) {
+    return ListTile(
+      leading: const Icon(Icons.rss_feed),
+      title: Text(label),
+      subtitle: Text(url, maxLines: 2, overflow: TextOverflow.ellipsis),
+      trailing: IconButton(
+        icon: const Icon(Icons.copy),
+        onPressed: () {
+          Clipboard.setData(ClipboardData(text: url));
+          Navigator.pop(ctx);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('链接已复制'), duration: Duration(seconds: 1)),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthState>();
@@ -44,6 +119,10 @@ class _ProfilePageState extends State<ProfilePage> {
         padding: const EdgeInsets.all(16),
         children: [
           if (auth.isLoggedIn) ..._buildLoggedIn(auth) else ..._buildGuest(),
+          if (auth.isLoggedIn) ...[
+            const SizedBox(height: 8),
+            _buildMyContentCard(auth),
+          ],
           const SizedBox(height: 8),
           _buildAppearanceCard(),
           const SizedBox(height: 8),
@@ -57,6 +136,8 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
           if (auth.isLoggedIn) ...[
+            const SizedBox(height: 8),
+            _buildAccountCard(auth),
             const SizedBox(height: 8),
             Card(
               child: ListTile(
@@ -76,72 +157,138 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   List<Widget> _buildLoggedIn(AuthState auth) {
-    final name = _me?.displayName ??
-        auth.displayName ??
-        auth.username ??
-        '用户';
+    final me = _selfUser(auth);
+    final name = me.displayName.isNotEmpty
+        ? me.displayName
+        : (me.username.isNotEmpty ? me.username : '用户');
     final uid = auth.userId ?? '';
 
     return [
       Card(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Row(
+          child: Column(
             children: [
-              if (_me != null)
-                UserAvatar(user: _me!, radius: 28)
-              else
-                const CircleAvatar(
-                  radius: 28,
-                  child: Icon(Icons.person, size: 32),
-                ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name,
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 4),
-                    Text('UID: $uid',
-                        style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                  ],
+              Row(
+                children: [
+                  if (_me != null)
+                    UserAvatar(user: _me!, radius: 28)
+                  else
+                    CircleAvatar(
+                      radius: 28,
+                      child: Icon(Icons.person, size: 32),
+                    ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(name,
+                            style: const TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        Text('UID: $uid',
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  _stat(_me?.discussionCount ?? 0, '主题'),
+                  _divider(),
+                  _stat(_me?.commentCount ?? 0, '回复'),
+                  _divider(),
+                  _stat(_me?.points ?? 0, '积分'),
+                  _divider(),
+                  _stat(_me?.money ?? 0, '金钱'),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _openSelf(0),
+                  icon: const Icon(Icons.person_outline),
+                  label: const Text('查看完整主页'),
                 ),
               ),
             ],
           ),
         ),
       ),
-      const SizedBox(height: 8),
-      Card(
-        child: Row(
-          children: [
-            _stat(_me?.discussionCount ?? 0, '主题'),
-            _divider(),
-            _stat(_me?.commentCount ?? 0, '回复'),
-          ],
-        ),
-      ),
     ];
+  }
+
+  Widget _buildMyContentCard(AuthState auth) {
+    return Card(
+      child: Column(
+        children: [
+          const ListTile(
+            leading: Icon(Icons.widgets_outlined),
+            title: Text('我的内容', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          _menuTile(Icons.article_outlined, '我的主题', () => _openSelf(1)),
+          _menuTile(Icons.chat_bubble_outline, '我的回复', () => _openSelf(0)),
+          _menuTile(Icons.alternate_email, '我的提及', () => _openSelf(4)),
+          _menuTile(Icons.how_to_vote_outlined, '我的投票', () => _openSelf(3)),
+          _menuTile(Icons.military_tech_outlined, '我的徽章', () => _openSelf(2)),
+          _menuTile(Icons.rss_feed, 'Feed 订阅链接', () => _showFeedSheet(auth)),
+          _menuTile(Icons.notifications_outlined, '通知', () => Navigator.of(context)
+              .push(MaterialPageRoute(builder: (_) => const NotificationsPage()))),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountCard(AuthState auth) {
+    final me = _selfUser(auth);
+    return Card(
+      child: Column(
+        children: [
+          const ListTile(
+            leading: Icon(Icons.manage_accounts_outlined),
+            title: Text('账号', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          _menuTile(
+            Icons.edit_outlined,
+            '编辑资料',
+            () => _openWeb('${AppConfig.baseUrl}/u/${me.username}/edit'),
+          ),
+          _menuTile(
+            Icons.lock_outline,
+            '账号与安全',
+            () => _openWeb('${AppConfig.baseUrl}/settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _menuTile(IconData icon, String title, VoidCallback onTap) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      trailing: const Icon(Icons.chevron_right, size: 20),
+      onTap: onTap,
+    );
   }
 
   Widget _divider() => Container(width: 1, height: 32, color: Colors.black12);
 
   Widget _stat(int value, String label) {
     return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Column(
-          children: [
-            Text('$value',
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 2),
-            Text(label,
-                style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          ],
-        ),
+      child: Column(
+        children: [
+          Text('$value',
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 2),
+          Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        ],
       ),
     );
   }

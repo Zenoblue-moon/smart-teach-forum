@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config.dart';
 import '../../core/models.dart';
@@ -138,9 +139,14 @@ class _DiscussionPageState extends State<DiscussionPage> {
   /// 楼层引用跳转。
   Future<void> _jumpToFloor(String discussionId, int number) async {
     if (discussionId != widget.discussionId) {
-      // 跳转到其它帖子的楼层：打开新页面。
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('该引用指向其他帖子')),
+      // 跳转到其它帖子的楼层：打开新帖子并定位到该楼层。
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => DiscussionPage(
+            discussionId: discussionId,
+            initialPostNumber: number > 0 ? number : null,
+          ),
+        ),
       );
       return;
     }
@@ -204,19 +210,38 @@ class _DiscussionPageState extends State<DiscussionPage> {
     );
   }
 
-  void _openUser(String username) {
-    // 预留：跳到用户主页（Flarum 用户搜索需登录，这里先提示）。
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('用户：$username')),
-    );
+  Future<void> _openUser(String username) async {
+    // 优先解析为本地用户主页，失败则浏览器打开论坛主页。
+    final user = await ForumService.instance.getUserByUsername(username);
+    if (!mounted) return;
+    if (user != null && user.id.isNotEmpty) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => UserPage(user: user)),
+      );
+      return;
+    }
+    final uri = Uri.tryParse('${AppConfig.baseUrl}/u/$username');
+    if (uri != null) {
+      try {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('无法打开用户：$username')),
+          );
+        }
+      }
+    }
   }
 
   void _openReply({Post? quote}) {
     String? quoteContent;
     String? quoteAuthor;
+    String? quotePostId;
     if (quote != null) {
       quoteContent = stripHtml(quote.contentHtml);
       quoteAuthor = quote.author?.username;
+      quotePostId = quote.id;
     }
     Navigator.of(context)
         .push(MaterialPageRoute(
@@ -225,6 +250,7 @@ class _DiscussionPageState extends State<DiscussionPage> {
             discussionTitle: _title,
             quoteContent: quoteContent,
             quoteAuthor: quoteAuthor,
+            postId: quotePostId,
           ),
         ))
         .then((_) => _load());

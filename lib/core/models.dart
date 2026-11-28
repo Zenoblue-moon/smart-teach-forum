@@ -91,11 +91,31 @@ class ForumUser {
   /// 头像地址，Flarum 返回的可能是相对路径。
   String? get avatarUrl => attributes['avatarUrl'] as String?;
 
+  /// 个人主页背景图（sycho/profile-cover 扩展）。
+  String? get cover => attributes['cover'] as String?;
+
+  /// 背景图缩略图。
+  String? get coverThumbnail => attributes['cover_thumbnail'] as String?;
+
+  /// 用户名 slug（通常与 username 一致）。
+  String get slug => (attributes['slug'] ?? attributes['username'] ?? '').toString();
+
   String? get bio => attributes['bio'] as String?;
   int get discussionCount => _int(attributes['discussionCount']);
   int get commentCount => _int(attributes['commentCount']);
+  int get bestAnswerCount => _int(attributes['bestAnswerCount']);
   String? get joinTime => attributes['joinTime'] as String?;
   String? get lastSeenAt => attributes['lastSeenAt'] as String?;
+
+  /// 金钱（matteocglossario/flarum-money）。
+  int get money => _int(attributes['money']);
+
+  /// 状态签名（clarkwinkelmann/status）。
+  String? get statusText => attributes['clarkwinkelmannStatusText'] as String?;
+  String? get statusEmoji => attributes['clarkwinkelmannStatusEmoji'] as String?;
+
+  int get followerCount => _int(attributes['followerCount']);
+  int get followingCount => _int(attributes['followingCount']);
   int? get points {
     final v = attributes['points'] ?? attributes['moneoPoints'];
     return v is num ? v.toInt() : null;
@@ -358,6 +378,16 @@ class Post {
     return null;
   }
 
+  /// 所属讨论（用于回复列表展示与跳转）。
+  Discussion? get discussion {
+    final rel = _json['relationships'];
+    if (rel is Map) {
+      final d = _doc.ref(rel['discussion']);
+      if (d != null) return Discussion.fromJson(d, _doc);
+    }
+    return null;
+  }
+
   List<Post> get mentionedBy {
     final rel = _json['relationships'];
     final list = <Post>[];
@@ -545,4 +575,38 @@ class NotificationItem {
         return contentType;
     }
   }
+}
+
+/// 用户佩戴的徽章（v17development/flarum-badges）。
+///
+/// [badge] 为徽章定义，[assignment] 为 userBadges 佩戴关系。
+class UserBadge {
+  UserBadge({required this.badge, required this.assignment});
+
+  final Map<String, dynamic> badge;
+  final Map<String, dynamic> assignment;
+
+  Map<String, dynamic> get _badgeAttrs =>
+      (badge['attributes'] ?? const {}) as Map<String, dynamic>;
+
+  Map<String, dynamic> get _assignmentAttrs =>
+      (assignment['attributes'] ?? const {}) as Map<String, dynamic>;
+
+  String get id => badge['id']?.toString() ?? '';
+  String get name => (_badgeAttrs['name'] ?? '').toString();
+
+  /// Font Awesome 图标类名（如 fas fa-couch）。
+  String get icon => (_badgeAttrs['icon'] ?? '').toString();
+
+  /// 徽章图片地址（可为空）。
+  String? get image => _badgeAttrs['image'] as String?;
+
+  String get description =>
+      (_assignmentAttrs['description'] ?? _badgeAttrs['description'] ?? '').toString();
+
+  String? get backgroundColor => _badgeAttrs['backgroundColor'] as String?;
+  String? get iconColor => _badgeAttrs['iconColor'] as String?;
+  String? get labelColor => _badgeAttrs['labelColor'] as String?;
+  String? get assignedAt => _assignmentAttrs['assignedAt'] as String?;
+  bool get isPrimary => (_assignmentAttrs['isPrimary'] ?? false) == true;
 }

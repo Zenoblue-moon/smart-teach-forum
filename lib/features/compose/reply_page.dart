@@ -14,12 +14,16 @@ class ReplyPage extends StatefulWidget {
     this.discussionTitle = '',
     this.quoteContent,
     this.quoteAuthor,
+    this.postId,
   }) : super(key: key);
 
   final String discussionId;
   final String discussionTitle;
   final String? quoteContent;
   final String? quoteAuthor;
+
+  /// 被回复楼层的帖子 id，用于生成帖子提及（@xxx#p{id}）。
+  final String? postId;
 
   @override
   State<ReplyPage> createState() => _ReplyPageState();
@@ -42,12 +46,23 @@ class _ReplyPageState extends State<ReplyPage> {
   }
 
   String _buildInitial() {
-    final q = widget.quoteContent;
-    if (q == null || q.isEmpty) return '';
     final author = widget.quoteAuthor;
-    final header = author != null && author.isNotEmpty ? '**$author** 说：\n' : '';
-    final quoted = q.split('\n').map((l) => '> $l').join('\n');
-    return '$header$quoted\n\n';
+    final parts = <String>[];
+
+    // 若为回复某楼层，生成帖子提及，使其在列表中显示为「回复了 X」。
+    if (widget.postId != null && widget.postId!.isNotEmpty) {
+      final name = (author != null && author.isNotEmpty) ? author : '楼层';
+      parts.add('@"$name"#p${widget.postId}');
+    }
+
+    final q = widget.quoteContent;
+    if (q != null && q.isNotEmpty) {
+      final header = author != null && author.isNotEmpty ? '**$author** 说：\n' : '';
+      final quoted = q.split('\n').map((l) => '> $l').join('\n');
+      parts.add('$header$quoted');
+    }
+
+    return parts.isEmpty ? '' : '${parts.join('\n\n')}\n\n';
   }
 
   Future<void> _submit() async {
